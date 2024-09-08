@@ -7,11 +7,22 @@ use std::ops::Range;
 pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     let mut events = Vec::new();
     let mut within_link = false;
+    let mut within_metadata = false;
     for (pulldown_event, mut range) in Parser::new_ext(text, Options::all()).into_offset_iter() {
+        if within_metadata {
+            if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
+                pulldown_event
+            {
+                within_metadata = false;
+            }
+            continue;
+        }
         match pulldown_event {
             pulldown_cmark::Event::Start(tag) => {
-                if let pulldown_cmark::Tag::Link { .. } = tag {
-                    within_link = true;
+                match tag {
+                    pulldown_cmark::Tag::Link { .. } => within_link = true,
+                    pulldown_cmark::Tag::MetadataBlock { .. } => within_metadata = true,
+                    _ => {}
                 }
                 events.push((range, MarkdownEvent::Start(tag.into())))
             }
@@ -72,8 +83,46 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 events.push((range, MarkdownEvent::TaskListMarker(checked)))
             }
+            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
+    events
+}
+
+pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
+    let mut events = Vec::new();
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[linkify::LinkKind::Url]);
+    let mut text_range = Range {
+        start: 0,
+        end: text.len(),
+    };
+    for link in finder.links(text) {
+        let link_range = link.start()..link.end();
+
+        if link_range.start > text_range.start {
+            events.push((text_range.start..link_range.start, MarkdownEvent::Text));
+        }
+
+        events.push((
+            link_range.clone(),
+            MarkdownEvent::Start(MarkdownTag::Link {
+                link_type: LinkType::Autolink,
+                dest_url: SharedString::from(link.as_str().to_string()),
+                title: SharedString::default(),
+                id: SharedString::default(),
+            }),
+        ));
+        events.push((link_range.clone(), MarkdownEvent::Text));
+        events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
+
+        text_range.start = link_range.end;
+    }
+
+    if text_range.end > text_range.start {
+        events.push((text_range, MarkdownEvent::Text));
+    }
+
     events
 }
 
@@ -223,7 +272,7 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
                     attrs,
                 }
             }
-            pulldown_cmark::Tag::BlockQuote => MarkdownTag::BlockQuote,
+            pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
             pulldown_cmark::Tag::CodeBlock(kind) => match kind {
                 pulldown_cmark::CodeBlockKind::Indented => {
                     MarkdownTag::CodeBlock(CodeBlockKind::Indented)
@@ -268,6 +317,11 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
             },
             pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
             pulldown_cmark::Tag::MetadataBlock(kind) => MarkdownTag::MetadataBlock(kind),
+            pulldown_cmark::Tag::DefinitionList
+            | pulldown_cmark::Tag::DefinitionListTitle
+            | pulldown_cmark::Tag::DefinitionListDefinition => {
+                unimplemented!("definition lists are not yet supported")
+            }
         }
     }
 }

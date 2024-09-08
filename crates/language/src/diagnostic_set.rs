@@ -69,6 +69,7 @@ impl DiagnosticEntry<PointUtf16> {
             severity: Some(self.diagnostic.severity),
             source: self.diagnostic.source.clone(),
             message: self.diagnostic.message.clone(),
+            data: self.diagnostic.data.clone(),
             ..Default::default()
         }
     }
@@ -108,6 +109,10 @@ impl DiagnosticSet {
     /// Returns the number of diagnostics in the set.
     pub fn len(&self) -> usize {
         self.diagnostics.summary().count
+    }
+    /// Returns true when there are no diagnostics in this diagnostic set
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Returns an iterator over the diagnostic entries in the set.

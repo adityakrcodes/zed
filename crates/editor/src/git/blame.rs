@@ -7,7 +7,7 @@ use git::{
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
-use http::HttpClient;
+use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use multi_buffer::MultiBufferRow;
 use project::{Item, Project};
@@ -455,7 +455,7 @@ async fn parse_commit_messages(
         .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
-        let parsed_message = parse_markdown(&message, &languages).await;
+        let parsed_message = parse_markdown(&message, languages).await;
 
         let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
             Some(provider.build_commit_permalink(

@@ -5,7 +5,8 @@ use editor::{Direction, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
 use language::{language_settings::all_language_settings, Anchor, Buffer};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
+use text::ToPoint;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -118,15 +119,13 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         should_report_inline_completion_event: bool,
         _cx: &mut ModelContext<Self>,
     ) {
-        if should_report_inline_completion_event {
-            if self.completion_id.is_some() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_inline_completion_event(
-                        Self::name().to_string(),
-                        false,
-                        self.file_extension.clone(),
-                    );
-                }
+        if should_report_inline_completion_event && self.completion_id.is_some() {
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                telemetry.report_inline_completion_event(
+                    Self::name().to_string(),
+                    false,
+                    self.file_extension.clone(),
+                );
             }
         }
 
@@ -139,7 +138,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
         cx: &'a AppContext,
-    ) -> Option<&'a str> {
+    ) -> Option<(&'a str, Option<Range<Anchor>>)> {
         let completion_text = self
             .supermaven
             .read(cx)
@@ -150,7 +149,11 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         let completion_text = completion_text.trim_end();
 
         if !completion_text.trim().is_empty() {
-            Some(completion_text)
+            let snapshot = buffer.read(cx).snapshot();
+            let mut point = cursor_position.to_point(&snapshot);
+            point.column = snapshot.line_len(point.row);
+            let range = cursor_position..snapshot.anchor_after(point);
+            Some((completion_text, Some(range)))
         } else {
             None
         }
@@ -158,7 +161,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
 }
 
 fn trim_to_end_of_line_unless_leading_newline(text: &str) -> &str {
-    if has_leading_newline(&text) {
+    if has_leading_newline(text) {
         text
     } else if let Some(i) = text.find('\n') {
         &text[..i]

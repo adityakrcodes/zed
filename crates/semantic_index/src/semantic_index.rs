@@ -1047,7 +1047,7 @@ mod tests {
     use std::{future, path::Path, sync::Arc};
 
     fn init_test(cx: &mut TestAppContext) {
-        _ = cx.update(|cx| {
+        cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             language::init(cx);
@@ -1068,10 +1068,10 @@ mod tests {
             batch_size: usize,
             compute_embedding: impl 'static + Fn(&str) -> Result<Embedding> + Send + Sync,
         ) -> Self {
-            return Self {
+            Self {
                 batch_size,
                 compute_embedding: Box::new(compute_embedding),
-            };
+            }
         }
     }
 
@@ -1192,7 +1192,7 @@ mod tests {
                 Err(anyhow!("cannot embed text containing a 'g' character"))
             } else {
                 Ok(Embedding::new(
-                    ('a'..'z')
+                    ('a'..='z')
                         .map(|char| text.chars().filter(|c| *c == char).count() as f32)
                         .collect(),
                 ))

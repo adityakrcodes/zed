@@ -1,13 +1,13 @@
-use html_to_markdown::{convert_html_to_markdown, TagHandler};
-use std::cell::RefCell;
+mod hexdocs;
+
 use std::fs;
-use std::rc::Rc;
+use std::sync::LazyLock;
 use zed::lsp::CompletionKind;
 use zed::{
-    CodeLabel, CodeLabelSpan, LanguageServerId, SlashCommand, SlashCommandOutput,
+    CodeLabel, CodeLabelSpan, KeyValueStore, LanguageServerId, SlashCommand, SlashCommandOutput,
     SlashCommandOutputSection,
 };
-use zed_extension_api::{self as zed, fetch, HttpRequest, Result};
+use zed_extension_api::{self as zed, Result};
 
 struct GleamExtension {
     cached_binary_path: Option<String>,
@@ -30,7 +30,7 @@ impl GleamExtension {
         }
 
         zed::set_language_server_installation_status(
-            &language_server_id,
+            language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         let release = zed::latest_github_release(
@@ -68,7 +68,7 @@ impl GleamExtension {
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
-                &language_server_id,
+                language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
@@ -84,7 +84,7 @@ impl GleamExtension {
             for entry in entries {
                 let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
                 if entry.file_name().to_str() != Some(&version_dir) {
-                    fs::remove_dir_all(&entry.path()).ok();
+                    fs::remove_dir_all(entry.path()).ok();
                 }
             }
         }
@@ -149,78 +149,20 @@ impl zed::Extension for GleamExtension {
         })
     }
 
-    fn complete_slash_command_argument(
-        &self,
-        command: SlashCommand,
-        _query: String,
-    ) -> Result<Vec<String>, String> {
-        match command.name.as_str() {
-            "gleam-project" => Ok(vec![
-                "apple".to_string(),
-                "banana".to_string(),
-                "cherry".to_string(),
-            ]),
-            _ => Ok(Vec::new()),
-        }
-    }
-
     fn run_slash_command(
         &self,
         command: SlashCommand,
-        argument: Option<String>,
-        worktree: &zed::Worktree,
+        _args: Vec<String>,
+        worktree: Option<&zed::Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
-            "gleam-docs" => {
-                let argument = argument.ok_or_else(|| "missing argument".to_string())?;
-
-                let mut components = argument.split('/');
-                let package_name = components
-                    .next()
-                    .ok_or_else(|| "missing package name".to_string())?;
-                let module_path = components.map(ToString::to_string).collect::<Vec<_>>();
-
-                let response = fetch(&HttpRequest {
-                    url: format!(
-                        "https://hexdocs.pm/{package_name}{maybe_path}",
-                        maybe_path = if !module_path.is_empty() {
-                            format!("/{}.html", module_path.join("/"))
-                        } else {
-                            String::new()
-                        }
-                    ),
-                })?;
-
-                let mut handlers: Vec<TagHandler> = vec![
-                    Rc::new(RefCell::new(
-                        html_to_markdown::markdown::WebpageChromeRemover,
-                    )),
-                    Rc::new(RefCell::new(html_to_markdown::markdown::ParagraphHandler)),
-                    Rc::new(RefCell::new(html_to_markdown::markdown::HeadingHandler)),
-                    Rc::new(RefCell::new(html_to_markdown::markdown::ListHandler)),
-                    Rc::new(RefCell::new(html_to_markdown::markdown::TableHandler::new())),
-                    Rc::new(RefCell::new(html_to_markdown::markdown::StyledTextHandler)),
-                ];
-
-                let markdown = convert_html_to_markdown(response.body.as_bytes(), &mut handlers)
-                    .map_err(|err| format!("failed to convert docs to Markdown {err}"))?;
-
-                let mut text = String::new();
-                text.push_str(&markdown);
-
-                Ok(SlashCommandOutput {
-                    sections: vec![SlashCommandOutputSection {
-                        range: (0..text.len()).into(),
-                        label: format!("gleam-docs: {package_name} {}", module_path.join("/")),
-                    }],
-                    text,
-                })
-            }
             "gleam-project" => {
+                let worktree = worktree.ok_or("no worktree")?;
+
                 let mut text = String::new();
                 text.push_str("You are in a Gleam project.\n");
 
-                if let Some(gleam_toml) = worktree.read_text_file("gleam.toml").ok() {
+                if let Ok(gleam_toml) = worktree.read_text_file("gleam.toml") {
                     text.push_str("The `gleam.toml` is as follows:\n");
                     text.push_str(&gleam_toml);
                 }
@@ -234,6 +176,35 @@ impl zed::Extension for GleamExtension {
                 })
             }
             command => Err(format!("unknown slash command: \"{command}\"")),
+        }
+    }
+
+    fn suggest_docs_packages(&self, provider: String) -> Result<Vec<String>, String> {
+        match provider.as_str() {
+            "gleam-hexdocs" => {
+                static GLEAM_PACKAGES: LazyLock<Vec<String>> = LazyLock::new(|| {
+                    include_str!("../packages.txt")
+                        .lines()
+                        .filter(|line| !line.starts_with('#'))
+                        .map(|line| line.trim().to_owned())
+                        .collect()
+                });
+
+                Ok(GLEAM_PACKAGES.clone())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    fn index_docs(
+        &self,
+        provider: String,
+        package: String,
+        database: &KeyValueStore,
+    ) -> Result<(), String> {
+        match provider.as_str() {
+            "gleam-hexdocs" => hexdocs::index(package, database),
+            _ => Ok(()),
         }
     }
 }
@@ -273,6 +244,6 @@ mod tests {
 
         let detail = "fn(\n  Method,\n  List(#(String, String)),\n  a,\n  Scheme,\n  String,\n  Option(Int),\n  String,\n  Option(String),\n) -> Request(a)";
         let expected = "fn(Method, List(#(String, String)), a, Scheme, String, Option(Int), String, Option(String)) -> Request(a)";
-        assert_eq!(strip_newlines_from_detail(&detail), expected);
+        assert_eq!(strip_newlines_from_detail(detail), expected);
     }
 }

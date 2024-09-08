@@ -20,11 +20,19 @@ pub struct EditorSettings {
     pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
+    pub use_smartcase_search: bool,
     pub multi_cursor_modifier: MultiCursorModifier,
     pub redact_private_values: bool,
     pub expand_excerpt_lines: u32,
+    pub middle_click_paste: bool,
     #[serde(default)]
     pub double_click_in_multibuffer: DoubleClickInMultibuffer,
+    pub search_wrap: bool,
+    #[serde(default)]
+    pub search: SearchSettings,
+    pub auto_signature_help: bool,
+    pub show_signature_help_after_edits: bool,
+    pub jupyter: Jupyter,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -62,6 +70,23 @@ pub enum DoubleClickInMultibuffer {
     /// Open the excerpt clicked as a new buffer in the new tab, if no `alt` modifier was pressed during double click.
     /// Otherwise, behave as a regular buffer and select the whole word.
     Open,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Jupyter {
+    /// Whether the Jupyter feature is enabled.
+    ///
+    /// Default: true
+    pub enabled: bool,
+}
+
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct JupyterContent {
+    /// Whether the Jupyter feature is enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -133,6 +158,19 @@ pub enum ScrollBeyondLastLine {
     VerticalScrollMargin,
 }
 
+/// Default options for buffer and project search items.
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchSettings {
+    #[serde(default)]
+    pub whole_word: bool,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub include_ignored: bool,
+    #[serde(default)]
+    pub regex: bool,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -196,6 +234,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
+    pub use_smartcase_search: Option<bool>,
     /// The key to use for adding multiple cursors
     ///
     /// Default: alt
@@ -212,11 +251,38 @@ pub struct EditorSettingsContent {
     /// Default: 3
     pub expand_excerpt_lines: Option<u32>,
 
+    /// Whether to enable middle-click paste on Linux
+    ///
+    /// Default: true
+    pub middle_click_paste: Option<bool>,
+
     /// What to do when multibuffer is double clicked in some of its excerpts
     /// (parts of singleton buffers).
     ///
     /// Default: select
     pub double_click_in_multibuffer: Option<DoubleClickInMultibuffer>,
+    /// Whether the editor search results will loop
+    ///
+    /// Default: true
+    pub search_wrap: Option<bool>,
+
+    /// Defaults to use when opening a new buffer and project search items.
+    ///
+    /// Default: nothing is enabled
+    pub search: Option<SearchSettings>,
+
+    /// Whether to automatically show a signature help pop-up or not.
+    ///
+    /// Default: false
+    pub auto_signature_help: Option<bool>,
+
+    /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
+    ///
+    /// Default: true
+    pub show_signature_help_after_edits: Option<bool>,
+
+    /// Jupyter REPL settings.
+    pub jupyter: Option<JupyterContent>,
 }
 
 // Toolbar related settings
@@ -267,7 +333,7 @@ pub struct ScrollbarContent {
 }
 
 /// Gutter related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -285,6 +351,12 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+}
+
+impl EditorSettings {
+    pub fn jupyter_enabled(cx: &AppContext) -> bool {
+        EditorSettings::get_global(cx).jupyter.enabled
+    }
 }
 
 impl Settings for EditorSettings {

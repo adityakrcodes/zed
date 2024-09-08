@@ -6,7 +6,7 @@ use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::Future;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use http::{self, HttpClient, HttpClientWithUrl, Method};
+use http_client::{self, HttpClient, HttpClientWithUrl, Method};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -18,7 +18,7 @@ use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CpuEvent, EditEvent,
     EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent,
-    MemoryEvent, SettingEvent,
+    MemoryEvent, ReplEvent, SettingEvent,
 };
 use tempfile::NamedTempFile;
 #[cfg(not(debug_assertions))]
@@ -203,6 +203,10 @@ impl Telemetry {
             max_queue_size: MAX_QUEUE_LEN,
             worktree_id_map: WorktreeIdMap(HashMap::from_iter([
                 (
+                    "pnpm-lock.yaml".to_string(),
+                    ProjectCache::new("pnpm".to_string()),
+                ),
+                (
                     "yarn.lock".to_string(),
                     ProjectCache::new("yarn".to_string()),
                 ),
@@ -223,7 +227,7 @@ impl Telemetry {
                 let state = state.clone();
                 async move {
                     if let Some(tempfile) =
-                        NamedTempFile::new_in(paths::config_dir().as_path()).log_err()
+                        NamedTempFile::new_in(paths::logs_dir().as_path()).log_err()
                     {
                         state.lock().log_file = Some(tempfile);
                     }
@@ -527,6 +531,21 @@ impl Telemetry {
         }
     }
 
+    pub fn report_repl_event(
+        self: &Arc<Self>,
+        kernel_language: String,
+        kernel_status: String,
+        repl_session_id: String,
+    ) {
+        let event = Event::Repl(ReplEvent {
+            kernel_language,
+            kernel_status,
+            repl_session_id,
+        });
+
+        self.report_event(event)
+    }
+
     fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
@@ -628,7 +647,7 @@ impl Telemetry {
 
                     let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
 
-                    let request = http::Request::builder()
+                    let request = http_client::Request::builder()
                         .method(Method::POST)
                         .uri(
                             this.http_client
@@ -651,13 +670,31 @@ impl Telemetry {
     }
 }
 
+pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
+    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+        return None;
+    };
+
+    let mut summer = Sha256::new();
+    summer.update(checksum_seed);
+    summer.update(json);
+    summer.update(checksum_seed);
+    let mut checksum = String::new();
+    for byte in summer.finalize().as_slice() {
+        use std::fmt::Write;
+        write!(&mut checksum, "{:02x}", byte).unwrap();
+    }
+
+    Some(checksum)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
-    use http::FakeHttpClient;
+    use http_client::FakeHttpClient;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
@@ -808,22 +845,4 @@ mod tests {
             && telemetry.state.lock().flush_events_task.is_none()
             && telemetry.state.lock().first_event_date_time.is_none()
     }
-}
-
-pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
-    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
-        return None;
-    };
-
-    let mut summer = Sha256::new();
-    summer.update(checksum_seed);
-    summer.update(&json);
-    summer.update(checksum_seed);
-    let mut checksum = String::new();
-    for byte in summer.finalize().as_slice() {
-        use std::fmt::Write;
-        write!(&mut checksum, "{:02x}", byte).unwrap();
-    }
-
-    Some(checksum)
 }

@@ -4,10 +4,10 @@ use chrono::Utc;
 use client::telemetry;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http::Method;
+use http_client::Method;
 use isahc::config::Configurable;
 
-use http::{self, HttpClient, HttpClientWithUrl};
+use http_client::{self, HttpClient, HttpClientWithUrl};
 use paths::{crashes_dir, crashes_retired_dir};
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
@@ -50,7 +50,7 @@ pub fn init_panic_hook(
             .payload()
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
-            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.clone()))
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
 
         if *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
@@ -162,7 +162,7 @@ pub fn monitor_main_thread_hangs(
 
     use parking_lot::Mutex;
 
-    use http::Method;
+    use http_client::Method;
     use std::{
         ffi::c_int,
         sync::{mpsc, OnceLock},
@@ -226,7 +226,7 @@ pub fn monitor_main_thread_hangs(
 
     let (mut tx, mut rx) = futures::channel::mpsc::channel(3);
     foreground_executor
-        .spawn(async move { while let Some(_) = rx.next().await {} })
+        .spawn(async move { while (rx.next().await).is_some() {} })
         .detach();
 
     background_executor
@@ -259,7 +259,7 @@ pub fn monitor_main_thread_hangs(
             let os_version = client::telemetry::os_version();
 
             loop {
-                while let Some(_) = backtrace_rx.recv().ok() {
+                while backtrace_rx.recv().is_ok() {
                     if !telemetry_settings.diagnostics {
                         return;
                     }
@@ -323,7 +323,7 @@ pub fn monitor_main_thread_hangs(
                         continue;
                     };
 
-                    let Ok(request) = http::Request::builder()
+                    let Ok(request) = http_client::Request::builder()
                         .method(Method::POST)
                         .uri(url.as_ref())
                         .header("x-zed-checksum", checksum)
@@ -416,7 +416,7 @@ async fn upload_previous_panics(
                     continue;
                 };
 
-                let Ok(request) = http::Request::builder()
+                let Ok(request) = http_client::Request::builder()
                     .method(Method::POST)
                     .uri(panic_report_url.as_ref())
                     .header("x-zed-checksum", checksum)
@@ -440,7 +440,7 @@ async fn upload_previous_panics(
     Ok::<_, anyhow::Error>(most_recent_panic)
 }
 
-static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
+static LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
 
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)
@@ -488,7 +488,7 @@ async fn upload_previous_crashes(
                 .await
                 .context("error reading crash file")?;
 
-            let mut request = http::Request::post(&crash_report_url.to_string())
+            let mut request = http_client::Request::post(&crash_report_url.to_string())
                 .redirect_policy(isahc::config::RedirectPolicy::Follow)
                 .header("Content-Type", "text/plain");
 

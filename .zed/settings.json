@@ -14,9 +14,19 @@
     },
     "JSON": {
       "tab_size": 2,
+      "preferred_line_length": 100,
+      "formatter": "prettier"
+    },
+    "JSONC": {
+      "tab_size": 2,
+      "preferred_line_length": 100,
       "formatter": "prettier"
     },
     "JavaScript": {
+      "tab_size": 2,
+      "formatter": "prettier"
+    },
+    "CSS": {
       "tab_size": 2,
       "formatter": "prettier"
     },
@@ -28,6 +38,7 @@
       }
     }
   },
+  "hard_tabs": false,
   "formatter": "auto",
   "remove_trailing_whitespace_on_save": true,
   "ensure_final_newline_on_save": true

@@ -1,6 +1,6 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
-/// Provides access to Zed settings.
+pub mod http_client;
 pub mod settings;
 
 use core::fmt;
@@ -19,15 +19,16 @@ pub use wit::{
         github_release_by_tag_name, latest_github_release, GithubRelease, GithubReleaseAsset,
         GithubReleaseOptions,
     },
-    zed::extension::http_client::{fetch, HttpRequest, HttpResponse},
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
-    zed::extension::slash_command::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection},
+    zed::extension::slash_command::{
+        SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
+    },
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    LanguageServerInstallationStatus, Range, Worktree,
+    KeyValueStore, LanguageServerInstallationStatus, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -113,8 +114,8 @@ pub trait Extension: Send + Sync {
     fn complete_slash_command_argument(
         &self,
         _command: SlashCommand,
-        _query: String,
-    ) -> Result<Vec<String>, String> {
+        _args: Vec<String>,
+    ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
         Ok(Vec::new())
     }
 
@@ -122,10 +123,29 @@ pub trait Extension: Send + Sync {
     fn run_slash_command(
         &self,
         _command: SlashCommand,
-        _argument: Option<String>,
-        _worktree: &Worktree,
+        _args: Vec<String>,
+        _worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         Err("`run_slash_command` not implemented".to_string())
+    }
+
+    /// Returns a list of package names as suggestions to be included in the
+    /// search results of the `/docs` slash command.
+    ///
+    /// This can be used to provide completions for known packages (e.g., from the
+    /// local project or a registry) before a package has been indexed.
+    fn suggest_docs_packages(&self, _provider: String) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Indexes the docs for the specified package.
+    fn index_docs(
+        &self,
+        _provider: String,
+        _package: String,
+        _database: &KeyValueStore,
+    ) -> Result<(), String> {
+        Err("`index_docs` not implemented".to_string())
     }
 }
 
@@ -162,11 +182,11 @@ static mut EXTENSION: Option<Box<dyn Extension>> = None;
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
 mod wit {
-    #![allow(clippy::too_many_arguments)]
+    #![allow(clippy::too_many_arguments, clippy::missing_safety_doc)]
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.0.7",
+        path: "./wit/since_v0.1.0",
     });
 }
 
@@ -237,17 +257,29 @@ impl wit::Guest for Component {
 
     fn complete_slash_command_argument(
         command: SlashCommand,
-        query: String,
-    ) -> Result<Vec<String>, String> {
-        extension().complete_slash_command_argument(command, query)
+        args: Vec<String>,
+    ) -> Result<Vec<SlashCommandArgumentCompletion>, String> {
+        extension().complete_slash_command_argument(command, args)
     }
 
     fn run_slash_command(
         command: SlashCommand,
-        argument: Option<String>,
-        worktree: &Worktree,
+        args: Vec<String>,
+        worktree: Option<&Worktree>,
     ) -> Result<SlashCommandOutput, String> {
-        extension().run_slash_command(command, argument, worktree)
+        extension().run_slash_command(command, args, worktree)
+    }
+
+    fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {
+        extension().suggest_docs_packages(provider)
+    }
+
+    fn index_docs(
+        provider: String,
+        package: String,
+        database: &KeyValueStore,
+    ) -> Result<(), String> {
+        extension().index_docs(provider, package, database)
     }
 }
 
